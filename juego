@@ -1,0 +1,212 @@
+import pygame
+import sys
+import time
+
+pygame.init()
+
+# Tamaño de ventana
+WIDTH, HEIGHT = 800, 400
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Juego de Plataformas con Doble Salto Doble Espacio")
+
+# Colores
+AZUL_CIELO = (135, 206, 235)
+VERDE = (34, 139, 34)
+MARRON = (139, 69, 19)
+ROJO = (255, 0, 0)
+GRIS_OSCURO = (40, 40, 40)
+NEGRO = (0, 0, 0)
+AMARILLO = (255, 255, 0)
+ROJO_OBSTACULO = (200, 0, 0)
+ROJO_PISO_PELIGROSO = (150, 0, 0)
+
+clock = pygame.time.Clock()
+
+WORLD_WIDTH = 3200
+GROUND_HEIGHT = HEIGHT - 50
+ZONA_SEGURA_ANCHO = 300  # Zona segura al inicio (piso seguro)
+
+class Player(pygame.sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.image = pygame.Surface((40, 60))
+        self.image.fill(ROJO)
+        self.rect = self.image.get_rect()
+        self.rect.x = 100
+        self.rect.y = GROUND_HEIGHT - self.rect.height
+        self.vel_y = 0
+        self.en_suelo = False
+        self.checkpoint_x = 100
+        self.checkpoint_y = GROUND_HEIGHT - self.rect.height
+
+        # Para doble salto con doble espacio
+        self.doble_salto_usado = False
+        self.salto_pulsado_una_vez = False
+        self.salto_pulsado_tiempo = 0
+
+    def update(self, plataformas, eventos):
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_a]:  # Mover izquierda con A
+            self.rect.x -= 5
+            if self.rect.x < 0:
+                self.rect.x = 0
+        if keys[pygame.K_d]:  # Mover derecha con D
+            self.rect.x += 5
+            if self.rect.x > WORLD_WIDTH - self.rect.width:
+                self.rect.x = WORLD_WIDTH - self.rect.width
+
+        # Manejo salto con detección de doble espacio
+        for event in eventos:
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                tiempo_actual = time.time()
+
+                # Primer salto normal
+                if self.en_suelo:
+                    self.vel_y = -15
+                    self.en_suelo = False
+                    self.doble_salto_usado = False
+                    self.salto_pulsado_una_vez = True
+                    self.salto_pulsado_tiempo = tiempo_actual
+
+                else:
+                    # Doble salto solo si no usado y doble espacio rápido
+                    if self.salto_pulsado_una_vez and (tiempo_actual - self.salto_pulsado_tiempo) <= 0.3:
+                        if not self.doble_salto_usado:
+                            self.vel_y = -15
+                            self.doble_salto_usado = True
+                            self.salto_pulsado_una_vez = False
+                    else:
+                        # Si no fue doble toque rápido, registrar primer toque
+                        self.salto_pulsado_una_vez = True
+                        self.salto_pulsado_tiempo = tiempo_actual
+
+        self.vel_y += 1  # gravedad
+        self.rect.y += self.vel_y
+
+        # Colisión con suelo
+        if self.rect.bottom > GROUND_HEIGHT:
+            self.rect.bottom = GROUND_HEIGHT
+            self.vel_y = 0
+            self.en_suelo = True
+            self.doble_salto_usado = False
+            self.salto_pulsado_una_vez = False
+
+        # Colisión con plataformas
+        collided = False
+        for p in plataformas:
+            if self.rect.colliderect(p.rect) and self.vel_y > 0:
+                if self.rect.bottom <= p.rect.bottom:
+                    self.rect.bottom = p.rect.top
+                    self.vel_y = 0
+                    self.en_suelo = True
+                    self.doble_salto_usado = False
+                    self.salto_pulsado_una_vez = False
+                    collided = True
+        if not collided and self.rect.bottom < GROUND_HEIGHT:
+            self.en_suelo = False
+
+    def reset_to_checkpoint(self):
+        self.rect.x = self.checkpoint_x
+        self.rect.y = self.checkpoint_y
+        self.vel_y = 0
+        self.en_suelo = False
+        self.doble_salto_usado = False
+        self.salto_pulsado_una_vez = False
+
+class Platform(pygame.sprite.Sprite):
+    def __init__(self, x, y, w, h):
+        super().__init__()
+        self.image = pygame.Surface((w, h))
+        self.image.fill(MARRON)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+class Obstacle(pygame.sprite.Sprite):
+    def __init__(self, x, y, w, h):
+        super().__init__()
+        self.image = pygame.Surface((w, h))
+        self.image.fill(ROJO_OBSTACULO)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+# Crear jugador
+player = Player()
+
+# Crear plataformas (colocadas para saltar y correr fluidamente)
+plataformas = [
+    Platform(0, GROUND_HEIGHT, ZONA_SEGURA_ANCHO, 50),  # Zona segura piso
+    Platform(350, 320, 150, 20),
+    Platform(550, 280, 130, 20),
+    Platform(750, 240, 160, 20),
+    Platform(1000, 280, 150, 20),
+    Platform(1250, 240, 130, 20),
+    Platform(1450, 200, 160, 20),
+    Platform(1750, 320, 180, 20),
+    Platform(2050, 280, 220, 20),
+    Platform(2350, 240, 150, 20),
+    Platform(2800, GROUND_HEIGHT - 50, 400, 50)  # Plataforma final (zona segura)
+]
+
+# Crear obstáculos solo sobre plataformas (posicionados dentro de estas)
+obstaculos = [
+    Obstacle(370, 300, 40, 20),
+    Obstacle(580, 260, 40, 20),
+    Obstacle(780, 220, 40, 20),
+    Obstacle(1300, 220, 40, 20),
+    Obstacle(1800, 300, 40, 20),
+    Obstacle(2100, 260, 40, 20),
+    Obstacle(2400, 220, 40, 20),
+]
+
+def draw_window(scroll_x):
+    screen.fill(AZUL_CIELO)
+    # Dibujar zona segura al inicio
+    pygame.draw.rect(screen, VERDE, (-scroll_x, GROUND_HEIGHT, ZONA_SEGURA_ANCHO, 50))
+
+    # Dibujar piso peligroso (todo el resto)
+    pygame.draw.rect(screen, ROJO_PISO_PELIGROSO, (ZONA_SEGURA_ANCHO - scroll_x, GROUND_HEIGHT, WORLD_WIDTH - ZONA_SEGURA_ANCHO, 50))
+
+    # Dibujar plataformas
+    for p in plataformas:
+        screen.blit(p.image, (p.rect.x - scroll_x, p.rect.y))
+
+    # Dibujar obstáculos
+    for o in obstaculos:
+        screen.blit(o.image, (o.rect.x - scroll_x, o.rect.y))
+
+    # Dibujar jugador
+    screen.blit(player.image, (player.rect.x - scroll_x, player.rect.y))
+
+running = True
+scroll_x = 0
+
+while running:
+    clock.tick(60)
+    eventos = pygame.event.get()
+    for event in eventos:
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+
+    player.update(plataformas, eventos)
+
+    # Verificar si el jugador tocó un obstáculo -> reiniciar
+    for o in obstaculos:
+        if player.rect.colliderect(o.rect):
+            player.reset_to_checkpoint()
+
+    # Verificar si cayó fuera de zona segura y piso peligroso
+    if player.rect.bottom > GROUND_HEIGHT and player.rect.x > ZONA_SEGURA_ANCHO:
+        player.reset_to_checkpoint()
+
+    # Actualizar scroll para seguir jugador
+    scroll_x = player.rect.x - WIDTH // 2
+    if scroll_x < 0:
+        scroll_x = 0
+    elif scroll_x > WORLD_WIDTH - WIDTH:
+        scroll_x = WORLD_WIDTH - WIDTH
+
+    draw_window(scroll_x)
+    pygame.display.flip()
