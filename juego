@@ -1,31 +1,195 @@
 import pygame
 import sys
 import time
+import random
+import json
+import os
 
 pygame.init()
 
 # Tamaño de ventana
 WIDTH, HEIGHT = 800, 400
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Juego de Plataformas con Doble Salto Doble Espacio")
+pygame.display.set_caption("Parkour Game - Sistema de Niveles")
 
 # Colores
 AZUL_CIELO = (135, 206, 235)
 VERDE = (34, 139, 34)
 MARRON = (139, 69, 19)
 ROJO = (255, 0, 0)
-GRIS_OSCURO = (40, 40, 40)
 NEGRO = (0, 0, 0)
 AMARILLO = (255, 255, 0)
 ROJO_OBSTACULO = (200, 0, 0)
-ROJO_PISO_PELIGROSO = (150, 0, 0)
-
+BLANCO = (255, 255, 255)
+VERDE_BANDERA = (0, 255, 0)
+ROJO_BANDERA = (255, 50, 50)
+AZUL_PARTICULA = (100, 200, 255)
+ROSA = (255, 105, 180)
+MORADO = (147, 112, 219)
+GRIS = (128, 128, 128)
 clock = pygame.time.Clock()
 
-WORLD_WIDTH = 3200
+WORLD_WIDTH = 5000
 GROUND_HEIGHT = HEIGHT - 50
-ZONA_SEGURA_ANCHO = 300  # Zona segura al inicio (piso seguro)
+ZONA_SEGURA_ANCHO = 300
 
+# Archivo de progreso
+PROGRESS_FILE = "game_progress.json"
+
+# =====================================
+# SISTEMA DE PROGRESO
+# =====================================
+def cargar_progreso():
+    if os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {"nivel_1_completado": False, "nivel_2_completado": False}
+    return {"nivel_1_completado": False, "nivel_2_completado": False}
+
+def guardar_progreso(progreso):
+    with open(PROGRESS_FILE, 'w') as f:
+        json.dump(progreso, f)
+
+# =====================================
+# PARTÍCULAS
+# =====================================
+class Particle:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vel_x = random.uniform(-3, 3)
+        self.vel_y = random.uniform(-8, -3)
+        self.lifetime = 30
+        self.size = random.randint(3, 6)
+        self.color = AZUL_PARTICULA
+    
+    def update(self):
+        self.x += self.vel_x
+        self.y += self.vel_y
+        self.vel_y += 0.3
+        self.lifetime -= 1
+        self.size = max(1, self.size - 0.1)
+    
+    def draw(self, screen, scroll_x):
+        if self.lifetime > 0:
+            pygame.draw.circle(screen, self.color, (int(self.x - scroll_x), int(self.y)), int(self.size))
+
+# =====================================
+# CORAZÓN
+# =====================================
+class Heart:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.size = 20
+        self.collected = False
+        self.rect = pygame.Rect(x - self.size//2, y - self.size//2, self.size, self.size)
+        self.float_offset = 0
+        self.float_speed = 0.1
+    
+    def update(self):
+        self.float_offset += self.float_speed
+        if abs(self.float_offset) > 5:
+            self.float_speed *= -1
+    
+    def draw(self, screen, scroll_x):
+        if not self.collected:
+            y_pos = self.y + self.float_offset
+            pygame.draw.circle(screen, ROSA, (int(self.x - scroll_x - 6), int(y_pos - 3)), 8)
+            pygame.draw.circle(screen, ROSA, (int(self.x - scroll_x + 6), int(y_pos - 3)), 8)
+            points = [
+                (self.x - scroll_x - 12, y_pos),
+                (self.x - scroll_x, y_pos + 12),
+                (self.x - scroll_x + 12, y_pos)
+            ]
+            pygame.draw.polygon(screen, ROSA, points)
+    
+    def check_collision(self, player_rect):
+        if not self.collected:
+            return self.rect.colliderect(player_rect)
+        return False
+
+# =====================================
+# BANDERA DE CHECKPOINT
+# =====================================
+class CheckpointFlag:
+    def __init__(self, x, y, platform_y):
+        self.x = x
+        self.platform_y = platform_y
+        self.y = platform_y - 60
+        self.width = 40
+        self.height = 60
+        self.pole_width = 5
+        self.activated = False
+        self.rect = pygame.Rect(x - 20, self.y, 50, 60)
+    
+    def draw(self, screen, scroll_x):
+        pole_height = self.platform_y - self.y
+        pygame.draw.rect(screen, MARRON, (self.x - scroll_x, self.y, self.pole_width, pole_height))
+        
+        color = VERDE_BANDERA if self.activated else ROJO_BANDERA
+        flag_points = [
+            (self.x + self.pole_width - scroll_x, self.y),
+            (self.x + self.pole_width + 30 - scroll_x, self.y + 15),
+            (self.x + self.pole_width - scroll_x, self.y + 30)
+        ]
+        pygame.draw.polygon(screen, color, flag_points)
+    
+    def check_collision(self, player_rect):
+        return self.rect.colliderect(player_rect)
+
+# =====================================
+# BANDERA DE META (AMARILLA GRANDE)
+# =====================================
+class GoalFlag:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = 80
+        self.height = 120
+        self.pole_width = 8
+        self.rect = pygame.Rect(x - 20, y, 100, 120)
+        self.wave_offset = 0
+    
+    def update(self):
+        self.wave_offset += 0.1
+    
+    def draw(self, screen, scroll_x):
+        # Poste grande
+        pygame.draw.rect(screen, MARRON, (self.x - scroll_x, self.y, self.pole_width, self.height))
+        
+        # Bandera amarilla grande con efecto de ondulación
+        flag_width = 60
+        flag_height = 40
+        
+        # Dibujar bandera con efecto de onda
+        for i in range(0, flag_width, 5):
+            wave = int(3 * pygame.math.Vector2(1, 0).rotate(self.wave_offset * 50 + i * 10).y)
+            x1 = self.x + self.pole_width - scroll_x + i
+            y1 = self.y + 10 + wave
+            x2 = self.x + self.pole_width - scroll_x + i + 5
+            y2 = self.y + 10 + wave
+            
+            points = [
+                (x1, y1),
+                (x2, y2),
+                (x2, y2 + flag_height),
+                (x1, y1 + flag_height)
+            ]
+            pygame.draw.polygon(screen, AMARILLO, points)
+        
+        # Borde de la bandera
+        pygame.draw.rect(screen, NEGRO, 
+                        (self.x + self.pole_width - scroll_x, self.y + 10, flag_width, flag_height), 2)
+    
+    def check_collision(self, player_rect):
+        return self.rect.colliderect(player_rect)
+
+# =====================================
+# PLAYER
+# =====================================
 class Player(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
@@ -36,74 +200,87 @@ class Player(pygame.sprite.Sprite):
         self.rect.y = GROUND_HEIGHT - self.rect.height
         self.vel_y = 0
         self.en_suelo = False
+        
         self.checkpoint_x = 100
         self.checkpoint_y = GROUND_HEIGHT - self.rect.height
-
-        # Para doble salto con doble espacio
+        
         self.doble_salto_usado = False
         self.salto_pulsado_una_vez = False
         self.salto_pulsado_tiempo = 0
+        
+        self.inmortal = False
+        
+        self.muertes = 0
+        self.vidas = 5
+        self.vidas_max = 8
+        
+        self.particles = []
+
+    def create_jump_particles(self):
+        for _ in range(8):
+            particle = Particle(self.rect.centerx, self.rect.bottom)
+            self.particles.append(particle)
+
+    def add_vida(self):
+        if self.vidas < self.vidas_max:
+            self.vidas += 1
 
     def update(self, plataformas, eventos):
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_a]:  # Mover izquierda con A
+        if keys[pygame.K_a]:
             self.rect.x -= 5
-            if self.rect.x < 0:
-                self.rect.x = 0
-        if keys[pygame.K_d]:  # Mover derecha con D
+        if keys[pygame.K_d]:
             self.rect.x += 5
-            if self.rect.x > WORLD_WIDTH - self.rect.width:
-                self.rect.x = WORLD_WIDTH - self.rect.width
 
-        # Manejo salto con detección de doble espacio
+        self.rect.x = max(0, min(self.rect.x, WORLD_WIDTH - self.rect.width))
+
         for event in eventos:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 tiempo_actual = time.time()
-
-                # Primer salto normal
                 if self.en_suelo:
                     self.vel_y = -15
                     self.en_suelo = False
                     self.doble_salto_usado = False
                     self.salto_pulsado_una_vez = True
                     self.salto_pulsado_tiempo = tiempo_actual
-
+                    self.create_jump_particles()
                 else:
-                    # Doble salto solo si no usado y doble espacio rápido
                     if self.salto_pulsado_una_vez and (tiempo_actual - self.salto_pulsado_tiempo) <= 0.3:
                         if not self.doble_salto_usado:
                             self.vel_y = -15
                             self.doble_salto_usado = True
                             self.salto_pulsado_una_vez = False
+                            self.create_jump_particles()
                     else:
-                        # Si no fue doble toque rápido, registrar primer toque
                         self.salto_pulsado_una_vez = True
                         self.salto_pulsado_tiempo = tiempo_actual
 
-        self.vel_y += 1  # gravedad
+        self.vel_y += 1
         self.rect.y += self.vel_y
 
-        # Colisión con suelo
-        if self.rect.bottom > GROUND_HEIGHT:
+        if self.rect.bottom > GROUND_HEIGHT and self.rect.x < ZONA_SEGURA_ANCHO:
             self.rect.bottom = GROUND_HEIGHT
             self.vel_y = 0
             self.en_suelo = True
             self.doble_salto_usado = False
             self.salto_pulsado_una_vez = False
 
-        # Colisión con plataformas
         collided = False
         for p in plataformas:
             if self.rect.colliderect(p.rect) and self.vel_y > 0:
-                if self.rect.bottom <= p.rect.bottom:
-                    self.rect.bottom = p.rect.top
-                    self.vel_y = 0
-                    self.en_suelo = True
-                    self.doble_salto_usado = False
-                    self.salto_pulsado_una_vez = False
-                    collided = True
+                self.rect.bottom = p.rect.top
+                self.vel_y = 0
+                self.en_suelo = True
+                self.doble_salto_usado = False
+                self.salto_pulsado_una_vez = False
+                collided = True
         if not collided and self.rect.bottom < GROUND_HEIGHT:
             self.en_suelo = False
+        
+        for particle in self.particles[:]:
+            particle.update()
+            if particle.lifetime <= 0:
+                self.particles.remove(particle)
 
     def reset_to_checkpoint(self):
         self.rect.x = self.checkpoint_x
@@ -112,101 +289,458 @@ class Player(pygame.sprite.Sprite):
         self.en_suelo = False
         self.doble_salto_usado = False
         self.salto_pulsado_una_vez = False
+        self.muertes += 1
+        if not self.inmortal:
+            self.vidas -= 1
 
+    def toggle_inmortal(self):
+        self.inmortal = not self.inmortal
+
+    def draw_particles(self, screen, scroll_x):
+        for particle in self.particles:
+            particle.draw(screen, scroll_x)
+
+# =====================================
+# PLATAFORMA Y OBSTÁCULO
+# =====================================
 class Platform(pygame.sprite.Sprite):
     def __init__(self, x, y, w, h):
         super().__init__()
         self.image = pygame.Surface((w, h))
         self.image.fill(MARRON)
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
+        self.rect = pygame.Rect(x, y, w, h)
 
 class Obstacle(pygame.sprite.Sprite):
     def __init__(self, x, y, w, h):
         super().__init__()
         self.image = pygame.Surface((w, h))
         self.image.fill(ROJO_OBSTACULO)
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
+        self.rect = pygame.Rect(x, y, w, h)
 
-# Crear jugador
-player = Player()
+# =====================================
+# MENÚ PRINCIPAL
+# =====================================
+def menu_principal():
+    fuente_titulo = pygame.font.SysFont(None, 80)
+    fuente_boton = pygame.font.SysFont(None, 50)
+    fuente_small = pygame.font.SysFont(None, 30)
+    
+    progreso = cargar_progreso()
+    
+    titulo = fuente_titulo.render("PARKOUR GAME", True, AMARILLO)
+    titulo_rect = titulo.get_rect(center=(WIDTH//2, HEIGHT//3 - 30))
+    
+    boton_nivel1 = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 - 40, 200, 60)
+    boton_nivel2 = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 40, 200, 60)
+    
+    while True:
+        screen.fill(AZUL_CIELO)
+        screen.blit(titulo, titulo_rect)
+        
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_click = False
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mouse_click = True
+        
+        # Botón Nivel 1
+        color_boton1 = VERDE if boton_nivel1.collidepoint(mouse_pos) else MARRON
+        pygame.draw.rect(screen, color_boton1, boton_nivel1, border_radius=10)
+        pygame.draw.rect(screen, NEGRO, boton_nivel1, 3, border_radius=10)
+        texto_boton1 = fuente_boton.render("NIVEL 1", True, BLANCO)
+        texto_rect1 = texto_boton1.get_rect(center=boton_nivel1.center)
+        screen.blit(texto_boton1, texto_rect1)
+        
+        # Botón Nivel 2 (bloqueado si no se completó nivel 1)
+        nivel2_desbloqueado = progreso.get("nivel_1_completado", False)
+        
+        if nivel2_desbloqueado:
+            color_boton2 = MORADO if boton_nivel2.collidepoint(mouse_pos) else MARRON
+            pygame.draw.rect(screen, color_boton2, boton_nivel2, border_radius=10)
+            pygame.draw.rect(screen, NEGRO, boton_nivel2, 3, border_radius=10)
+            texto_boton2 = fuente_boton.render("NIVEL 2", True, BLANCO)
+        else:
+            pygame.draw.rect(screen, GRIS, boton_nivel2, border_radius=10)
+            pygame.draw.rect(screen, NEGRO, boton_nivel2, 3, border_radius=10)
+            texto_boton2 = fuente_boton.render("NIVEL 2", True, NEGRO)
+            # Candado
+            texto_bloqueado = fuente_small.render("🔒 Completa Nivel 1", True, ROJO)
+            texto_bloq_rect = texto_bloqueado.get_rect(center=(WIDTH//2, boton_nivel2.bottom + 25))
+            screen.blit(texto_bloqueado, texto_bloq_rect)
+        
+        texto_rect2 = texto_boton2.get_rect(center=boton_nivel2.center)
+        screen.blit(texto_boton2, texto_rect2)
+        
+        # Instrucciones
+        fuente_inst = pygame.font.SysFont(None, 22)
+        inst1 = fuente_inst.render("A/D: Mover | SPACE: Saltar (doble salto) | I: Modo inmortal", True, NEGRO)
+        inst2 = fuente_inst.render("Toca la bandera amarilla al final para ganar", True, NEGRO)
+        screen.blit(inst1, (WIDTH//2 - inst1.get_width()//2, HEIGHT - 70))
+        screen.blit(inst2, (WIDTH//2 - inst2.get_width()//2, HEIGHT - 40))
+        
+        if mouse_click:
+            if boton_nivel1.collidepoint(mouse_pos):
+                return 1
+            elif boton_nivel2.collidepoint(mouse_pos) and nivel2_desbloqueado:
+                return 2
+        
+        pygame.display.flip()
+        clock.tick(60)
 
-# Crear plataformas (colocadas para saltar y correr fluidamente)
-plataformas = [
-    Platform(0, GROUND_HEIGHT, ZONA_SEGURA_ANCHO, 50),  # Zona segura piso
-    Platform(350, 320, 150, 20),
-    Platform(550, 280, 130, 20),
-    Platform(750, 240, 160, 20),
-    Platform(1000, 280, 150, 20),
-    Platform(1250, 240, 130, 20),
-    Platform(1450, 200, 160, 20),
-    Platform(1750, 320, 180, 20),
-    Platform(2050, 280, 220, 20),
-    Platform(2350, 240, 150, 20),
-    Platform(2800, GROUND_HEIGHT - 50, 400, 50)  # Plataforma final (zona segura)
-]
+# =====================================
+# PANTALLA DE GAME OVER
+# =====================================
+def pantalla_game_over(muertes, nivel):
+    fuente = pygame.font.SysFont(None, 80)
+    fuente_sub = pygame.font.SysFont(None, 40)
+    texto = fuente.render("GAME OVER", True, ROJO)
+    texto_nivel = fuente_sub.render(f"Nivel {nivel}", True, BLANCO)
+    texto_muertes = fuente_sub.render(f"Muertes: {muertes}", True, BLANCO)
+    texto_opciones = fuente_sub.render("R: Reintentar | M: Menú | Q: Salir", True, BLANCO)
+    
+    rect = texto.get_rect(center=(WIDTH//2, HEIGHT//2 - 70))
+    rect_nivel = texto_nivel.get_rect(center=(WIDTH//2, HEIGHT//2 - 20))
+    rect_muertes = texto_muertes.get_rect(center=(WIDTH//2, HEIGHT//2 + 20))
+    rect_opciones = texto_opciones.get_rect(center=(WIDTH//2, HEIGHT//2 + 70))
+    
+    while True:
+        screen.fill(NEGRO)
+        screen.blit(texto, rect)
+        screen.blit(texto_nivel, rect_nivel)
+        screen.blit(texto_muertes, rect_muertes)
+        screen.blit(texto_opciones, rect_opciones)
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    return "retry"
+                if event.key == pygame.K_m:
+                    return "menu"
+                if event.key == pygame.K_q:
+                    pygame.quit()
+                    sys.exit()
 
-# Crear obstáculos solo sobre plataformas (posicionados dentro de estas)
-obstaculos = [
-    Obstacle(370, 300, 40, 20),
-    Obstacle(580, 260, 40, 20),
-    Obstacle(780, 220, 40, 20),
-    Obstacle(1300, 220, 40, 20),
-    Obstacle(1800, 300, 40, 20),
-    Obstacle(2100, 260, 40, 20),
-    Obstacle(2400, 220, 40, 20),
-]
+# =====================================
+# EFECTO DE CAÍDA
+# =====================================
+def efecto_caida():
+    for i in range(6):
+        screen.fill((150, 0, 0))
+        pygame.display.flip()
+        pygame.time.delay(70)
+        screen.fill((0, 0, 0))
+        pygame.display.flip()
+        pygame.time.delay(70)
 
-def draw_window(scroll_x):
+# =====================================
+# PANTALLA DE VICTORIA
+# =====================================
+def pantalla_victoria(muertes, nivel):
+    fuente = pygame.font.SysFont(None, 80)
+    fuente_sub = pygame.font.SysFont(None, 40)
+    texto = fuente.render("¡GANASTE!", True, AMARILLO)
+    texto_nivel = fuente_sub.render(f"Nivel {nivel} completado", True, BLANCO)
+    texto_muertes = fuente_sub.render(f"Muertes: {muertes}", True, BLANCO)
+    
+    # Guardar progreso
+    progreso = cargar_progreso()
+    if nivel == 1:
+        progreso["nivel_1_completado"] = True
+        texto_siguiente = fuente_sub.render("¡Nivel 2 desbloqueado! Presiona M para Menú", True, VERDE)
+    else:
+        progreso["nivel_2_completado"] = True
+        texto_siguiente = fuente_sub.render("¡Juego completado! Presiona M para Menú", True, VERDE)
+    
+    guardar_progreso(progreso)
+    
+    rect = texto.get_rect(center=(WIDTH//2, HEIGHT//2 - 70))
+    rect_nivel = texto_nivel.get_rect(center=(WIDTH//2, HEIGHT//2 - 20))
+    rect_muertes = texto_muertes.get_rect(center=(WIDTH//2, HEIGHT//2 + 20))
+    rect_siguiente = texto_siguiente.get_rect(center=(WIDTH//2, HEIGHT//2 + 70))
+    
+    while True:
+        screen.fill((0, 0, 0))
+        screen.blit(texto, rect)
+        screen.blit(texto_nivel, rect_nivel)
+        screen.blit(texto_muertes, rect_muertes)
+        screen.blit(texto_siguiente, rect_siguiente)
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_m:
+                    return "menu"
+                if event.key == pygame.K_q:
+                    pygame.quit()
+                    sys.exit()
+
+# =====================================
+# DIBUJAR HUD
+# =====================================
+def draw_hud(player, nivel):
+    fuente = pygame.font.SysFont(None, 30)
+    
+    # Nivel
+    texto_nivel = fuente.render(f"Nivel {nivel}", True, MORADO if nivel == 2 else VERDE)
+    screen.blit(texto_nivel, (WIDTH - 120, 10))
+    
+    # Contador de muertes
+    texto_muertes = fuente.render(f"Muertes: {player.muertes}", True, NEGRO)
+    screen.blit(texto_muertes, (10, 10))
+    
+    # Vidas con corazones
+    corazon_size = 25
+    for i in range(player.vidas):
+        x = 10 + i * (corazon_size + 5)
+        y = 45
+        pygame.draw.circle(screen, ROSA, (x + 6, y + 3), 6)
+        pygame.draw.circle(screen, ROSA, (x + 14, y + 3), 6)
+        points = [(x + 2, y + 6), (x + 10, y + 16), (x + 18, y + 6)]
+        pygame.draw.polygon(screen, ROSA, points)
+    
+    # Modo inmortal
+    if player.inmortal:
+        texto_inmortal = fuente.render("MODO INMORTAL", True, AMARILLO)
+        rect_inmortal = texto_inmortal.get_rect(center=(WIDTH//2, 20))
+        pygame.draw.rect(screen, NEGRO, rect_inmortal.inflate(20, 10))
+        screen.blit(texto_inmortal, rect_inmortal)
+
+# =====================================
+# DIBUJAR PANTALLA
+# =====================================
+def draw_window(scroll_x, player, plataformas, obstaculos, goal_flag, checkpoints, hearts, nivel):
     screen.fill(AZUL_CIELO)
-    # Dibujar zona segura al inicio
+
     pygame.draw.rect(screen, VERDE, (-scroll_x, GROUND_HEIGHT, ZONA_SEGURA_ANCHO, 50))
 
-    # Dibujar piso peligroso (todo el resto)
-    pygame.draw.rect(screen, ROJO_PISO_PELIGROSO, (ZONA_SEGURA_ANCHO - scroll_x, GROUND_HEIGHT, WORLD_WIDTH - ZONA_SEGURA_ANCHO, 50))
-
-    # Dibujar plataformas
     for p in plataformas:
         screen.blit(p.image, (p.rect.x - scroll_x, p.rect.y))
 
-    # Dibujar obstáculos
     for o in obstaculos:
         screen.blit(o.image, (o.rect.x - scroll_x, o.rect.y))
 
-    # Dibujar jugador
+    # Dibujar bandera de meta
+    goal_flag.draw(screen, scroll_x)
+
+    for checkpoint in checkpoints:
+        checkpoint.draw(screen, scroll_x)
+
+    for heart in hearts:
+        heart.draw(screen, scroll_x)
+
+    player.draw_particles(screen, scroll_x)
+
     screen.blit(player.image, (player.rect.x - scroll_x, player.rect.y))
+    
+    draw_hud(player, nivel)
 
-running = True
-scroll_x = 0
+# =====================================
+# CREAR NIVEL 1
+# =====================================
+def crear_nivel_1():
+    plataformas = [
+        Platform(0, GROUND_HEIGHT, ZONA_SEGURA_ANCHO, 50),
+        Platform(350, 320, 150, 20),
+        Platform(650, 280, 150, 20),
+        Platform(900, 240, 150, 20),
+        Platform(1200, 280, 150, 20),
+        Platform(1600, GROUND_HEIGHT - 40, 250, 40),
+        Platform(2000, 320, 160, 20),
+        Platform(2300, 280, 160, 20),
+        Platform(2600, 260, 160, 20),
+        Platform(2900, 240, 160, 20),
+        Platform(3300, GROUND_HEIGHT - 60, 250, 40),
+        Platform(3700, 300, 200, 20),
+        Platform(4000, 260, 200, 20),
+        Platform(4300, 220, 200, 20),
+        Platform(4700, GROUND_HEIGHT - 50, 400, 50)
+    ]
 
-while running:
-    clock.tick(60)
-    eventos = pygame.event.get()
-    for event in eventos:
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
+    obstaculos = [
+        Obstacle(370, 300, 40, 20),
+        Obstacle(680, 260, 40, 20),
+        Obstacle(930, 220, 40, 20),
+        Obstacle(1230, 260, 40, 20),
+        Obstacle(2030, 300, 40, 20),
+        Obstacle(2330, 260, 40, 20),
+        Obstacle(2630, 240, 40, 20),
+        Obstacle(2930, 220, 40, 20),
+        Obstacle(3730, 280, 40, 20),
+        Obstacle(4030, 240, 40, 20),
+        Obstacle(4330, 200, 40, 20),
+    ]
 
-    player.update(plataformas, eventos)
+    checkpoints = [
+        CheckpointFlag(1700, GROUND_HEIGHT - 40, GROUND_HEIGHT - 40),
+        CheckpointFlag(3400, GROUND_HEIGHT - 60, GROUND_HEIGHT - 60),
+    ]
 
-    # Verificar si el jugador tocó un obstáculo -> reiniciar
-    for o in obstaculos:
-        if player.rect.colliderect(o.rect):
+    hearts = [
+        Heart(1050, 200),
+        Heart(2450, 220),
+        Heart(4150, 220),
+    ]
+
+    # Bandera de meta amarilla grande
+    goal_flag = GoalFlag(4900, GROUND_HEIGHT - 170)
+    
+    return plataformas, obstaculos, checkpoints, hearts, goal_flag
+
+# =====================================
+# CREAR NIVEL 2 (MÁS DIFÍCIL)
+# =====================================
+def crear_nivel_2():
+    plataformas = [
+        Platform(0, GROUND_HEIGHT, ZONA_SEGURA_ANCHO, 50),
+        Platform(400, 310, 100, 15),
+        Platform(650, 270, 90, 15),
+        Platform(880, 230, 100, 15),
+        Platform(1120, 260, 85, 15),
+        Platform(1350, 220, 90, 15),
+        Platform(1650, GROUND_HEIGHT - 50, 200, 40),
+        Platform(2000, 300, 80, 15),
+        Platform(2200, 260, 75, 15),
+        Platform(2420, 230, 80, 15),
+        Platform(2650, 200, 75, 15),
+        Platform(2900, 240, 80, 15),
+        Platform(3150, 210, 75, 15),
+        Platform(3450, GROUND_HEIGHT - 70, 200, 40),
+        Platform(3800, 280, 70, 15),
+        Platform(4000, 240, 70, 15),
+        Platform(4200, 200, 70, 15),
+        Platform(4400, 170, 70, 15),
+        Platform(4600, 210, 80, 15),
+        Platform(4850, GROUND_HEIGHT - 50, 300, 50)
+    ]
+
+    obstaculos = [
+        Obstacle(420, 290, 35, 20),
+        Obstacle(670, 250, 35, 20),
+        Obstacle(900, 210, 35, 20),
+        Obstacle(1140, 240, 35, 20),
+        Obstacle(1370, 200, 35, 20),
+        Obstacle(2020, 280, 35, 20),
+        Obstacle(2220, 240, 35, 20),
+        Obstacle(2440, 210, 35, 20),
+        Obstacle(2670, 180, 35, 20),
+        Obstacle(2920, 220, 35, 20),
+        Obstacle(3170, 190, 35, 20),
+        Obstacle(3820, 260, 35, 20),
+        Obstacle(4020, 220, 35, 20),
+        Obstacle(4220, 180, 35, 20),
+        Obstacle(4420, 150, 35, 20),
+        Obstacle(4620, 190, 35, 20),
+    ]
+
+    checkpoints = [
+        CheckpointFlag(1730, GROUND_HEIGHT - 50, GROUND_HEIGHT - 50),
+        CheckpointFlag(3530, GROUND_HEIGHT - 70, GROUND_HEIGHT - 70),
+    ]
+
+    hearts = [
+        Heart(1200, 180),
+        Heart(3000, 200),
+    ]
+
+    # Bandera de meta amarilla grande
+    goal_flag = GoalFlag(5000, GROUND_HEIGHT - 170)
+    
+    return plataformas, obstaculos, checkpoints, hearts, goal_flag
+
+# =====================================
+# FUNCIÓN PRINCIPAL DEL JUEGO
+# =====================================
+def juego_principal(nivel):
+    player = Player()
+    
+    if nivel == 1:
+        plataformas, obstaculos, checkpoints, hearts, goal_flag = crear_nivel_1()
+    else:
+        plataformas, obstaculos, checkpoints, hearts, goal_flag = crear_nivel_2()
+
+    running = True
+    scroll_x = 0
+    
+    while running:
+        clock.tick(60)
+        eventos = pygame.event.get()
+        
+        for event in eventos:
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_i:
+                player.toggle_inmortal()
+
+        player.update(plataformas, eventos)
+
+        # Actualizar bandera de meta
+        goal_flag.update()
+
+        for heart in hearts:
+            heart.update()
+
+        for checkpoint in checkpoints:
+            if checkpoint.check_collision(player.rect) and not checkpoint.activated:
+                checkpoint.activated = True
+                player.checkpoint_x = checkpoint.x
+                player.checkpoint_y = checkpoint.y
+
+        for heart in hearts:
+            if heart.check_collision(player.rect):
+                heart.collected = True
+                player.add_vida()
+
+        for o in obstaculos:
+            if player.rect.colliderect(o.rect) and not player.inmortal:
+                efecto_caida()
+                player.reset_to_checkpoint()
+                if player.vidas <= 0:
+                    resultado = pantalla_game_over(player.muertes, nivel)
+                    return resultado
+
+        if player.rect.bottom > GROUND_HEIGHT and player.rect.x > ZONA_SEGURA_ANCHO and not player.inmortal:
+            efecto_caida()
             player.reset_to_checkpoint()
+            if player.vidas <= 0:
+                resultado = pantalla_game_over(player.muertes, nivel)
+                return resultado
 
-    # Verificar si cayó fuera de zona segura y piso peligroso
-    if player.rect.bottom > GROUND_HEIGHT and player.rect.x > ZONA_SEGURA_ANCHO:
-        player.reset_to_checkpoint()
+        # Verificar colisión con bandera de meta
+        if goal_flag.check_collision(player.rect):
+            resultado = pantalla_victoria(player.muertes, nivel)
+            return resultado
 
-    # Actualizar scroll para seguir jugador
-    scroll_x = player.rect.x - WIDTH // 2
-    if scroll_x < 0:
-        scroll_x = 0
-    elif scroll_x > WORLD_WIDTH - WIDTH:
-        scroll_x = WORLD_WIDTH - WIDTH
+        scroll_x = player.rect.x - WIDTH // 2
+        scroll_x = max(0, min(scroll_x, WORLD_WIDTH - WIDTH))
 
-    draw_window(scroll_x)
-    pygame.display.flip()
+        draw_window(scroll_x, player, plataformas, obstaculos, goal_flag, checkpoints, hearts, nivel)
+        pygame.display.flip()
+
+# =====================================
+# INICIO DEL JUEGO
+# =====================================
+while True:
+    nivel_seleccionado = menu_principal()
+    
+    while True:
+        resultado = juego_principal(nivel_seleccionado)
+        
+        if resultado == "retry":
+            continue
+        elif resultado == "menu":
+            break
+        else:
+            break
